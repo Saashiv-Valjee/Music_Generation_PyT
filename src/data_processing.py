@@ -1,3 +1,5 @@
+# src/data_processing.py
+
 import os
 import glob
 import torch
@@ -34,7 +36,7 @@ class MaestroDataset(Dataset):
         # Retrieve all MIDI file paths recursively from the data directory
         self.midi_files = glob.glob(os.path.join(data_dir, '**/*.mid*'), recursive=True)
 
-        # Build the vocabulary of unique notes and rests from the MIDI files
+        # Build the vocabulary of unique MIDI note numbers and rests
         self.note2idx, self.idx2note = self.build_vocab()
 
         # Preprocess the data to convert MIDI files into sequences of token indices
@@ -42,16 +44,11 @@ class MaestroDataset(Dataset):
 
     def build_vocab(self):
         """
-        Build a vocabulary mapping from notes/rests to indices and vice versa.
-        
-        NOTE
-        Save the DICTs somewhere so I don't have to read 1000+ midis again :_)
-        Now thinking about it... I already know all the unique keys for MIDI,
-        I should have used that rather then reading all the notes x)
+        Build a vocabulary mapping from MIDI note numbers/rests to indices and vice versa.
 
         Returns:
-            note2idx (dict): Dictionary mapping notes/rests to unique indices.
-            idx2note (dict): Dictionary mapping indices back to notes/rests.
+            note2idx (dict): Dictionary mapping MIDI note numbers/rests to unique indices.
+            idx2note (dict): Dictionary mapping indices back to MIDI note numbers/rests.
         """
         # Path to the vocabulary file
         vocab_path = os.path.join(self.data_dir, 'vocab.pkl')
@@ -65,43 +62,25 @@ class MaestroDataset(Dataset):
             idx2note = vocab['idx2note']
             logger.info("Vocabulary loaded from disk.")
         else:
-            logger.info("Building unique vocabulary...")
-            notes = set()  # Set to store unique notes and rests
-
-            # Iterate over all MIDI files to collect unique notes and rests
-            count = 0
-            for midi_file in self.midi_files:
-                count += 1
-                logger.info(f'Processing file {count}/{len(self.midi_files)}: {midi_file}')
-                try:
-                    # Parse the MIDI file into a music21 stream object
-                    stream = music21.converter.parse(midi_file)
-                    # Iterate over all notes and rests in the stream
-                    for element in stream.flatten().notesAndRests:
-                        if element.isNote:
-                            # Add the string representation of the note's pitch to the set
-                            notes.add(str(element.pitch))
-                        elif element.isRest:
-                            # Add 'REST' to represent rests
-                            notes.add('REST')
-                except Exception as e:
-                    # Log a warning if there's an error parsing a MIDI file
-                    logger.warning(f"Error parsing {midi_file}: {e}")
-                    continue
+            logger.info("Building vocabulary without reading MIDI files...")
+            # Define the possible MIDI note numbers (0-127)
+            midi_notes = list(range(128))  # MIDI note numbers from 0 to 127
+            # Assign a unique integer to 'REST', e.g., 128
+            rest_token = 128
+            midi_notes.append(rest_token)
 
             # Create mappings from notes to indices and indices to notes
-            note2idx = {note: idx for idx, note in enumerate(sorted(notes))}
+            note2idx = {note: idx for idx, note in enumerate(midi_notes)}
             idx2note = {idx: note for note, idx in note2idx.items()}
 
             logger.info(f"Vocabulary size: {len(note2idx)}")
 
             # Save the vocabulary to disk
             with open(vocab_path, 'wb') as f:
-                pickle.dump({'note2idx': note2idx, 'idx2note': idx2note}, f)
+                pickle.dump({'note2idx': note2idx, 'idx2note': idx2note, 'rest_token': rest_token}, f)
             logger.info("Vocabulary saved to disk.")
 
         return note2idx, idx2note
-
 
     def preprocess_data(self):
         """
@@ -116,11 +95,14 @@ class MaestroDataset(Dataset):
         # Check if the processed data file exists
         if os.path.exists(processed_data_path):
             # Load the processed data from disk
-            sequences = torch.load(processed_data_path)
+            sequences = torch.load(processed_data_path, weights_only=True)
             logger.info("Processed data loaded from disk.")
         else:
             logger.info("Preprocessing data...")
             sequences = []  # List to store all sequences
+
+            # Get the rest token from the vocabulary
+            rest_token = self.note2idx[128]  # 'REST' token is assigned 128
 
             # Iterate over all MIDI files to create sequences
             count = 0
@@ -134,11 +116,11 @@ class MaestroDataset(Dataset):
                     # Iterate over all notes and rests in the stream
                     for element in stream.flatten().notesAndRests:
                         if element.isNote:
-                            # Get the token index for the note's pitch
-                            token = self.note2idx.get(str(element.pitch), None)
+                            # Use the MIDI pitch number as the token
+                            token = self.note2idx.get(element.pitch.midi)
                         elif element.isRest:
-                            # Get the token index for 'REST'
-                            token = self.note2idx.get('REST', None)
+                            # Use 'REST' token
+                            token = rest_token
                         else:
                             # Skip elements that are neither notes nor rests
                             continue
@@ -164,7 +146,6 @@ class MaestroDataset(Dataset):
             logger.info("Processed data saved to disk.")
 
         return sequences
-
 
     def __len__(self):
         """
@@ -249,7 +230,7 @@ def get_data_loader(data_dir, batch_size=32, sequence_length=100, shuffle=True):
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,  # Shuffle the data at every epoch if True
-        collate_fn=collate_fn,
+        collate_fn=collate_fn,  # Calling a method, not a process to be applied to an element
         drop_last=True  # Drop the last batch if it's incomplete
     )
     return data_loader

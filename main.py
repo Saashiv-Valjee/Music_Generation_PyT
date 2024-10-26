@@ -1,33 +1,15 @@
-# music generation with transformer using pytorch and maestro Dataset
-# 1: setup Environment and import libraries
+# main.py
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-import numpy as np
-import music21
-import os
-import glob
-import random
 import logging
-
 from src.data_processing import get_data_loader
-
-# Set device
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# setting up project space
-if not os.path.exists('data'): os.makedirs('data')
-if not os.path.exists('models'): os.makedirs('models')
-if not os.path.exists('src'): os.makedirs('src')
-if not os.path.exists('outputs'): os.makedirs('outputs')
+import music21
 
 # Configure the root logger
 logging.basicConfig(
     level=logging.INFO,  # Set to DEBUG for more detailed output
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(name)s - %(levelname)s - %(message)s'
 )
+logger = logging.getLogger(__name__)
 
 def main():
     data_dir = 'data/maestro-v3.0.0/'
@@ -52,12 +34,24 @@ def main():
 
         # Optionally, print the first input and target sequences
         idx2note = data_loader.dataset.idx2note
-        input_notes = [idx2note[idx.item()] for idx in inputs[0]]
-        target_notes = [idx2note[idx.item()] for idx in targets[0]]
 
-        print(f"First input sequence (indices): {inputs[0]}")
+        # Since idx2note now maps indices to MIDI note numbers, we need to convert them to note names
+        input_indices = inputs[0].tolist()
+        target_indices = targets[0].tolist()
+
+        # Function to convert MIDI numbers to note names
+        def midi_to_note_name(midi_number):
+            if midi_number == 128:  # REST token
+                return 'REST'
+            else:
+                return music21.note.Note(midi_number).nameWithOctave
+
+        input_notes = [midi_to_note_name(idx2note[idx]) for idx in input_indices]
+        target_notes = [midi_to_note_name(idx2note[idx]) for idx in target_indices]
+
+        print(f"First input sequence (indices): {input_indices}")
         print(f"First input sequence (notes): {input_notes}")
-        print(f"First target sequence (indices): {targets[0]}")
+        print(f"First target sequence (indices): {target_indices}")
         print(f"First target sequence (notes): {target_notes}")
         break  # Test only one batch
 
